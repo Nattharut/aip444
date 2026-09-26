@@ -5,15 +5,19 @@ import subprocess
 from datetime import datetime
 
 from dotenv import load_dotenv, find_dotenv
-from openai import OpenAI
+from openai import OpenAI, APIStatusError
 
 STUDENT_NAME = "Nattharut Natvongsakul"
 STUDENT_ID = "184108231"
 
 # Two free models from two different providers on OpenRouter.
-MODEL_A = "google/gemma-3-27b-it:free"
-MODEL_B = "meta-llama/llama-3.3-70b-instruct:free"
+MODEL_A = "cohere/north-mini-code:free"
+MODEL_B = "nvidia/nemotron-3-super-120b-a12b:free"
 DEFAULT_MODEL = MODEL_A
+
+# Cheap paid model used if a free model is rate-limited (HTTP 429) or otherwise
+# unavailable, so the tool still produces a commit message no matter what.
+FALLBACK_MODEL = "openai/gpt-5-nano"
 
 DEFAULT_TEMPERATURE = 0.1
 CREATIVE_TEMPERATURE = 1.3
@@ -87,6 +91,16 @@ def generate_commit_message(client, model, system_prompt, temperature, diff):
     return response.choices[0].message.content.strip()
 
 
+def generate_with_fallback(client, model, system_prompt, temperature, diff):
+    try:
+        return generate_commit_message(client, model, system_prompt, temperature, diff)
+    except APIStatusError as e:
+        print(f"⚠️  {model} unavailable ({e.status_code}), retrying with fallback model {FALLBACK_MODEL}...")
+        return generate_commit_message(
+            client, FALLBACK_MODEL, system_prompt, temperature, diff
+        )
+
+
 def main():
     print_header()
     api_key = load_api_key()
@@ -99,17 +113,17 @@ def main():
     if is_creative:
         print(f"\nCreative mode enabled (temperature={CREATIVE_TEMPERATURE})\n")
 
-        message_a = generate_commit_message(
+        message_a = generate_with_fallback(
             client, MODEL_A, CREATIVE_SYSTEM_PROMPT, CREATIVE_TEMPERATURE, diff
         )
-        message_b = generate_commit_message(
+        message_b = generate_with_fallback(
             client, MODEL_B, CREATIVE_SYSTEM_PROMPT, CREATIVE_TEMPERATURE, diff
         )
 
         print(f"Option 1 ({MODEL_A}):\n{message_a}\n")
         print(f"Option 2 ({MODEL_B}):\n{message_b}")
     else:
-        message = generate_commit_message(
+        message = generate_with_fallback(
             client, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, DEFAULT_TEMPERATURE, diff
         )
         print(f"\nGenerated commit message:\n\n{message}")
