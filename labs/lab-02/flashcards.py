@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 
 from dotenv import load_dotenv, find_dotenv
-from openai import OpenAI, APIStatusError
+from openai import OpenAI, APIError, APIStatusError
 
 STUDENT_NAME = "Nattharut Natvongsakul"
 STUDENT_ID = "184108231"
@@ -18,6 +18,15 @@ DEFAULT_MODEL = "google/gemma-4-31b-it:free"
 FALLBACK_MODEL = "google/gemma-4-31b-it"
 
 TEMPERATURE = 0.2
+
+# 5 cards plus analysis uses ~2,000 tokens. The cap stops a degenerate response
+# (e.g. one word repeated forever) from running for minutes.
+MAX_TOKENS = 4000
+
+# Retry when the response has neither cards nor an INSUFFICIENT_NOTES message.
+MAX_ATTEMPTS = 2
+
+REQUEST_TIMEOUT_SECONDS = 120
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYSTEM_PROMPT_PATH = os.path.join(SCRIPT_DIR, "SYSTEM_PROMPT.md")
@@ -87,7 +96,7 @@ def build_user_prompt(notes, num_cards):
 Reminders:
 - First reason step-by-step in <analysis> tags, following the workflow.
 - Generate at most {num_cards} card(s), using ONLY information from the notes above. If the notes are empty or insufficient, respond with INSUFFICIENT_NOTES: instead. If they support fewer than {num_cards}, make fewer cards and add a NOTE: line.
-- EVIDENCE must be copied word for word from the notes, in double quotes, with nothing after the closing quote.
+- EVIDENCE must be ONE continuous passage copied word for word from the notes, in double quotes: no "..." or "[...]", no joining separate passages, and nothing after the closing quote.
 - Expand every acronym in ANSWER, e.g. "Application Programming Interface (API)".
 - MISCONCEPTION must be a first-person quote in a confused student's voice.
 - End every card with a line containing only ===."""
@@ -97,6 +106,7 @@ def generate(client, model, system_prompt, user_prompt):
     response = client.chat.completions.create(
         model=model,
         temperature=TEMPERATURE,
+        max_tokens=MAX_TOKENS,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -108,9 +118,14 @@ def generate(client, model, system_prompt, user_prompt):
 def generate_with_fallback(client, system_prompt, user_prompt):
     try:
         return generate(client, DEFAULT_MODEL, system_prompt, user_prompt)
-    except APIStatusError as e:
-        print(f"⚠️  {DEFAULT_MODEL} unavailable ({e.status_code}), retrying with fallback model {FALLBACK_MODEL}...")
+    except APIError as e:
+        reason = e.status_code if isinstance(e, APIStatusError) else type(e).__name__
+        print(f"⚠️  {DEFAULT_MODEL} unavailable ({reason}), retrying with fallback model {FALLBACK_MODEL}...")
+    try:
         return generate(client, FALLBACK_MODEL, system_prompt, user_prompt)
+    except APIError as e:
+        print(f"❌ Error: fallback model {FALLBACK_MODEL} also failed: {e}")
+        sys.exit(1)
 
 
 CARD_PATTERN = re.compile(
@@ -178,32 +193,46 @@ def main():
     print(f"✅ Notes loaded: {args.notes_path} ({len(notes)} characters)")
     print(f"Generating {args.cards} card(s)...")
 
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
-    response = generate_with_fallback(
-        client, system_prompt, build_user_prompt(notes, args.cards)
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=0,  # we handle fallback/retries ourselves
     )
-    output = response.choices[0].message.content or ""
+    user_prompt = build_user_prompt(notes, args.cards)
 
-    if response.usage:
-        print(
-            f"Model: {response.model} | Tokens: {response.usage.prompt_tokens} in, "
-            f"{response.usage.completion_tokens} out"
-        )
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        response = generate_with_fallback(client, system_prompt, user_prompt)
+        output = response.choices[0].message.content or ""
 
-    # Only parse what comes after the reasoning, so draft cards or a "NOTE:" inside
-    # <analysis> aren't mistaken for final output. If the block was never closed,
-    # fall back to the whole response.
-    final_output = output.split("</analysis>", 1)[-1]
+        if response.usage:
+            # OpenRouter reports which hosting provider served the request; useful
+            # when one provider misbehaves (e.g. repeating a word until max_tokens).
+            provider = (response.model_extra or {}).get("provider", "unknown")
+            print(
+                f"Model: {response.model} via {provider} | Tokens: "
+                f"{response.usage.prompt_tokens} in, {response.usage.completion_tokens} out"
+            )
 
-    cards = extract_cards(final_output)
-    if not cards:
+        # Only parse what comes after the reasoning, so draft cards or a "NOTE:" inside
+        # <analysis> aren't mistaken for final output. If the block was never closed,
+        # fall back to the whole response.
+        final_output = output.split("</analysis>", 1)[-1]
+        cards = extract_cards(final_output)
         insufficient = extract_status_line(final_output, "INSUFFICIENT_NOTES:")
+        if cards or insufficient:
+            break
+        if attempt < MAX_ATTEMPTS:
+            reason = response.choices[0].finish_reason
+            print(f"⚠️  Response had no cards (finish reason: {reason}), retrying...")
+
+    if not cards:
         if insufficient:
             print(f"\n⚠️  Unable to generate flashcards from these notes:\n\n{insufficient}")
         else:
-            # Unexpected response; show it rather than failing silently.
-            print("\n❌ No cards found in output. Model response:\n")
-            print(output.strip())
+            # Unexpected response; show the start of it rather than failing silently.
+            print("\n❌ No cards found in output. Start of model response:\n")
+            print(output.strip()[:1000])
         sys.exit(1)
 
     print(f"\n✅ Generated {len(cards)} flashcard(s):\n")
