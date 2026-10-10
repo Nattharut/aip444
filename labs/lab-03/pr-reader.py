@@ -62,7 +62,7 @@ def parse_pr_url(url):
 
     # Allow trailing segments like /files or /commits that GitHub adds to PR tabs.
     parts = [p for p in parsed.path.split("/") if p]
-    if len(parts) < 4 or parts[2] != "pull" or not parts[3].isdigit():
+    if len(parts) < 4 or parts[2] != "pull" or not parts[3].isdecimal() or not parts[3].isascii():
         print(f"❌ Error: Not a GitHub Pull Request URL: {url}")
         print("   Expected: https://github.com/OWNER/REPO/pull/NUMBER")
         sys.exit(1)
@@ -70,12 +70,25 @@ def parse_pr_url(url):
     return parts[0], parts[1], int(parts[3])
 
 
+def http_get(url, headers):
+    try:
+        return requests.get(url, headers=headers, timeout=30)
+    except requests.RequestException as err:
+        print(f"❌ Network error fetching {url}")
+        print(f"   {type(err).__name__}: {err}")
+        sys.exit(1)
+
+
 def fetch_diff(owner, repo, number):
     """Return (diff_text, was_truncated)."""
     url = f"https://github.com/{owner}/{repo}/pull/{number}.diff"
-    response = requests.get(url, headers={"User-Agent": GITHUB_HEADERS["User-Agent"]}, timeout=30)
+    response = http_get(url, {"User-Agent": GITHUB_HEADERS["User-Agent"]})
     if response.status_code != 200:
         print(f"❌ Error fetching diff: {response.status_code} {response.reason}")
+        # GitHub refuses to generate very large diffs rather than sending one we
+        # could truncate ourselves.
+        if "too big" in response.text:
+            print("   GitHub says this diff is too big to generate. Try a smaller PR.")
         sys.exit(1)
 
     diff = response.text
@@ -87,7 +100,7 @@ def fetch_diff(owner, repo, number):
 
 
 def github_get(url):
-    response = requests.get(url, headers=GITHUB_HEADERS, timeout=30)
+    response = http_get(url, GITHUB_HEADERS)
     if response.status_code == 200:
         return response.json()
 
@@ -271,6 +284,11 @@ def main():
     )
     print("Asking your code-reading mentor...")
     response = generate_with_fallback(client, system_prompt, user_prompt)
+    # OpenRouter can return HTTP 200 with an error object and no choices.
+    if not response.choices:
+        error = (response.model_extra or {}).get("error", "no choices in response")
+        print(f"❌ OpenRouter returned no report: {error}")
+        sys.exit(1)
     report = response.choices[0].message.content or ""
 
     if response.usage:
