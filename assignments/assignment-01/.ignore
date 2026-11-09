@@ -1,0 +1,3 @@
+# Few-shot examples in the prompts contain deliberately insecure code; keep
+# them out of ripgrep results so reviewers never report them as findings.
+prompts/
