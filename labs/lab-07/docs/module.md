@@ -1,0 +1,1440 @@
+# Modules: `node:module` API
+
+<!--introduced_in=v12.20.0-->
+
+> Stability: 2 - Stable
+
+<!-- source_link=lib/module.js -->
+
+The `node:module` module provides utilities for interacting with the Node.js
+module system.
+
+It can be accessed using:
+
+```mjs
+import module from 'node:module';
+```
+
+## Class: `Module`
+
+<!-- YAML
+added: v0.3.5
+-->
+
+`module` objects in [CommonJS][] modules are instances of this class.
+
+See the CommonJS documentation for [the `module` object][].
+
+## `module.builtinModules`
+
+<!-- YAML
+added:
+  - v9.3.0
+  - v8.10.0
+  - v6.13.0
+changes:
+  - version: v23.5.0
+    pr-url: https://github.com/nodejs/node/pull/56185
+    description: The list now also contains prefix-only modules.
+-->
+
+* Type: {string\[]}
+
+A list of the names of all modules provided by Node.js.
+
+```mjs
+import { builtinModules } from 'node:module';
+console.log(builtinModules.filter((name) => name.startsWith('path')));
+// Prints: [ 'path', 'path/posix', 'path/win32' ]
+```
+
+To test whether a module name corresponds to a builtin module, use
+[`module.isBuiltin()`][].
+
+## `module.createRequire(filename)`
+
+<!-- YAML
+added: v12.2.0
+-->
+
+* `filename` {string|URL} Filename to be used to construct the require
+  function. Must be a file URL object, file URL string, or absolute path
+  string.
+* Returns: {require} Require function
+
+```mjs
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
+// sibling-module.js is a CommonJS module.
+const siblingModule = require('./sibling-module');
+```
+
+## `module.findPackageJSON(specifier[, base])`
+
+<!-- YAML
+added:
+  - v23.2.0
+  - v22.14.0
+-->
+
+> Stability: 1.1 - Active Development
+
+* `specifier` {string|URL} The specifier for the module whose `package.json` to
+  retrieve. When passing a _bare specifier_, the `package.json` at the root of
+  the package is returned. When passing a _relative specifier_ or an _absolute specifier_,
+  the closest parent `package.json` is returned.
+* `base` {string|URL} The absolute location (`file:` URL string or FS path) of the
+  containing  module. For CJS, use `__filename` (not `__dirname`!); for ESM, use
+  `import.meta.url`. You do not need to pass it if `specifier` is an `absolute specifier`.
+* Returns: {string|undefined} A path if the `package.json` is found. When `specifier`
+  is a package, the package's root `package.json`; when a relative or unresolved, the closest
+  `package.json` to the `specifier`.
+
+> **Caveat**: Do not use this to try to determine module format. There are many things affecting
+> that determination; the `type` field of package.json is the _least_ definitive (ex file extension
+> supersedes it, and a loader hook supersedes that).
+
+> **Caveat**: This currently leverages only the built-in default resolver; if
+> [`resolve` customization hooks][resolve hook] are registered, they will not affect the resolution.
+> This may change in the future.
+
+```text
+/path/to/project
+  ├ packages/
+    ├ bar/
+      ├ bar.js
+      └ package.json // name = '@foo/bar'
+    └ qux/
+      ├ node_modules/
+        └ some-package/
+          └ package.json // name = 'some-package'
+      ├ qux.js
+      └ package.json // name = '@foo/qux'
+  ├ main.js
+  └ package.json // name = '@foo'
+```
+
+```mjs
+// /path/to/project/packages/bar/bar.js
+import { findPackageJSON } from 'node:module';
+
+findPackageJSON('..', import.meta.url);
+// '/path/to/project/package.json'
+// Same result when passing an absolute specifier instead:
+findPackageJSON(new URL('../', import.meta.url));
+findPackageJSON(import.meta.resolve('../'));
+
+findPackageJSON('some-package', import.meta.url);
+// '/path/to/project/packages/bar/node_modules/some-package/package.json'
+// When passing an absolute specifier, you might get a different result if the
+// resolved module is inside a subfolder that has nested `package.json`.
+findPackageJSON(import.meta.resolve('some-package'));
+// '/path/to/project/packages/bar/node_modules/some-package/some-subfolder/package.json'
+
+findPackageJSON('@foo/qux', import.meta.url);
+// '/path/to/project/packages/qux/package.json'
+```
+
+```cjs
+// /path/to/project/packages/bar/bar.js
+const { findPackageJSON } = require('node:module');
+const { pathToFileURL } = require('node:url');
+const path = require('node:path');
+
+findPackageJSON('..', __filename);
+// '/path/to/project/package.json'
+// Same result when passing an absolute specifier instead:
+findPackageJSON(pathToFileURL(path.join(__dirname, '..')));
+
+findPackageJSON('some-package', __filename);
+// '/path/to/project/packages/bar/node_modules/some-package/package.json'
+// When passing an absolute specifier, you might get a different result if the
+// resolved module is inside a subfolder that has nested `package.json`.
+findPackageJSON(pathToFileURL(require.resolve('some-package')));
+// '/path/to/project/packages/bar/node_modules/some-package/some-subfolder/package.json'
+
+findPackageJSON('@foo/qux', __filename);
+// '/path/to/project/packages/qux/package.json'
+```
+
+## `module.isBuiltin(moduleName)`
+
+<!-- YAML
+added:
+  - v18.6.0
+  - v16.17.0
+-->
+
+* `moduleName` {string} name of the module
+* Returns: {boolean} returns true if the module is builtin else returns false
+
+```mjs
+import { isBuiltin } from 'node:module';
+isBuiltin('node:fs'); // true
+isBuiltin('fs'); // true
+isBuiltin('wss'); // false
+```
+
+## `module.registerHooks(options)`
+
+<!-- YAML
+added:
+  - v23.5.0
+  - v22.15.0
+changes:
+  - version:
+    - v25.4.0
+    - v24.13.1
+    pr-url: https://github.com/nodejs/node/pull/60960
+    description: Synchronous and in-thread hooks are now release candidate.
+-->
+
+> Stability: 1.2 - Release candidate
+
+* `options` {Object}
+  * `load` {Function|undefined} See [load hook][]. **Default:** `undefined`.
+  * `resolve` {Function|undefined} See [resolve hook][]. **Default:** `undefined`.
+* Returns: {Object} An object with the following property:
+  * `deregister()` {Function} Remove the registered hooks so that they are no
+    longer called. Hooks are otherwise retained for the lifetime of the running
+    process.
+  * `[Symbol.dispose]` {Function} The same as `deregister`.
+
+Register [hooks][] that customize Node.js module resolution and loading behavior.
+See [Customization hooks][]. The returned object can be used to
+[deregister the hooks][deregistration of customization hooks].
+
+## `module.stripTypeScriptTypes(code[, options])`
+
+<!-- YAML
+added:
+  - v23.2.0
+  - v22.13.0
+changes:
+  - version: v26.0.0
+    pr-url: https://github.com/nodejs/node/pull/61803
+    description: Removed `transform` and `sourceMap` options.
+-->
+
+> Stability: 1.2 - Release candidate
+
+* `code` {string} The code to strip type annotations from.
+* `options` {Object}
+  * `mode` {string} **Default:** `'strip'`. Possible values are:
+    * `'strip'` Only strip type annotations without performing the transformation of TypeScript features.
+  * `sourceUrl` {string}  Specifies the source url used in the source map.
+* Returns: {string} The code with type annotations stripped.
+
+`module.stripTypeScriptTypes()` removes type annotations from TypeScript code. It
+can be used to strip type annotations from TypeScript code before running it
+with `vm.runInContext()` or `vm.compileFunction()`.
+
+By default, it will throw an error if the code contains TypeScript features
+that require transformation, such as `enum`s. See [type-stripping][] for more information.
+
+_WARNING_: The output of this function should not be considered stable across Node.js versions,
+due to changes in the TypeScript parser.
+
+```mjs
+import { stripTypeScriptTypes } from 'node:module';
+const code = 'const a: number = 1;';
+const strippedCode = stripTypeScriptTypes(code);
+console.log(strippedCode);
+// Prints: const a         = 1;
+```
+
+```cjs
+const { stripTypeScriptTypes } = require('node:module');
+const code = 'const a: number = 1;';
+const strippedCode = stripTypeScriptTypes(code);
+console.log(strippedCode);
+// Prints: const a         = 1;
+```
+
+If `sourceUrl` is provided, it will be used appended as a comment at the end of the output:
+
+```mjs
+import { stripTypeScriptTypes } from 'node:module';
+const code = 'const a: number = 1;';
+const strippedCode = stripTypeScriptTypes(code, { mode: 'strip', sourceUrl: 'source.ts' });
+console.log(strippedCode);
+// Prints: const a         = 1\n\n//# sourceURL=source.ts;
+```
+
+```cjs
+const { stripTypeScriptTypes } = require('node:module');
+const code = 'const a: number = 1;';
+const strippedCode = stripTypeScriptTypes(code, { mode: 'strip', sourceUrl: 'source.ts' });
+console.log(strippedCode);
+// Prints: const a         = 1\n\n//# sourceURL=source.ts;
+```
+
+## `module.syncBuiltinESMExports()`
+
+<!-- YAML
+added: v12.12.0
+-->
+
+The `module.syncBuiltinESMExports()` method updates all the live bindings for
+builtin [ES Modules][] to match the properties of the [CommonJS][] exports. It
+does not add or remove exported names from the [ES Modules][].
+
+```js
+const fs = require('node:fs');
+const assert = require('node:assert');
+const { syncBuiltinESMExports } = require('node:module');
+
+fs.readFile = newAPI;
+
+delete fs.readFileSync;
+
+function newAPI() {
+  // ...
+}
+
+fs.newAPI = newAPI;
+
+syncBuiltinESMExports();
+
+import('node:fs').then((esmFS) => {
+  // It syncs the existing readFile property with the new value
+  assert.strictEqual(esmFS.readFile, newAPI);
+  // readFileSync has been deleted from the required fs
+  assert.strictEqual('readFileSync' in fs, false);
+  // syncBuiltinESMExports() does not remove readFileSync from esmFS
+  assert.strictEqual('readFileSync' in esmFS, true);
+  // syncBuiltinESMExports() does not add names
+  assert.strictEqual(esmFS.newAPI, undefined);
+});
+```
+
+## Module compile cache
+
+<!-- YAML
+added: v22.1.0
+changes:
+  - version: v22.8.0
+    pr-url: https://github.com/nodejs/node/pull/54501
+    description: add initial JavaScript APIs for runtime access.
+-->
+
+The module compile cache can be enabled either using the [`module.enableCompileCache()`][]
+method or the [`NODE_COMPILE_CACHE=dir`][] environment variable. After it is enabled,
+whenever Node.js compiles a CommonJS, an ECMAScript Module, a TypeScript module, or a
+WebAssembly module, it will use on-disk [V8 code cache][] persisted in the specified
+directory to speed up the compilation.
+This may slow down the first load of a module graph, but subsequent loads of the same module
+graph may get a significant speedup if the contents of the modules do not change.
+
+To clean up the generated compile cache on disk, simply remove the cache directory. The cache
+directory will be recreated the next time the same directory is used for compile cache
+storage. To avoid filling up the disk with stale cache, it is recommended to use a directory
+under the [`os.tmpdir()`][]. If the compile cache is enabled by a call to
+[`module.enableCompileCache()`][] without specifying the `directory`, Node.js will use
+the [`NODE_COMPILE_CACHE=dir`][] environment variable if it's set, or defaults
+to `path.join(os.tmpdir(), 'node-compile-cache')` otherwise. To locate the compile cache
+directory used by a running Node.js instance, use [`module.getCompileCacheDir()`][].
+
+The enabled module compile cache can be disabled by the [`NODE_DISABLE_COMPILE_CACHE=1`][]
+environment variable. This can be useful when the compile cache leads to unexpected or
+undesired behaviors (e.g. less precise test coverage).
+
+At the moment, when the compile cache is enabled and a module is loaded afresh, the
+code cache is generated from the compiled code immediately, but will only be written
+to disk when the Node.js instance is about to exit. This is subject to change. The
+[`module.flushCompileCache()`][] method can be used to ensure the accumulated code cache
+is flushed to disk in case the application wants to spawn other Node.js instances
+and let them share the cache long before the parent exits.
+
+The compile cache layout on disk is an implementation detail and should not be
+relied upon. The compile cache generated is typically only reusable in the same
+version of Node.js, and should be not assumed to be compatible across different
+versions of Node.js.
+
+### Portability of the compile cache
+
+By default, caches are invalidated when the absolute paths of the modules being
+cached are changed. To keep the cache working after moving the
+project directory, enable portable compile cache. This allows previously compiled
+modules to be reused across different directory locations as long as the layout relative
+to the cache directory remains the same. This would be done on a best-effort basis. If
+Node.js cannot compute the location of a module relative to the cache directory, the module
+will not be cached.
+
+A portable cache is also not split by user: on platforms with uids the
+cache subdirectory of a non-portable cache is suffixed with the uid of the
+user who created it, so it is only found by that user, while a portable
+cache uses the same subdirectory for every user. This lets a cache generated
+once (for example at build time, then shipped read-only with an application)
+be read by whoever runs the code; a user who cannot write to the directory
+still reads it, and a failed write only means the module is compiled again.
+
+There are two ways to enable the portable mode:
+
+1. Using the portable option in [`module.enableCompileCache()`][]:
+
+   ```js
+   // Non-portable cache (default): cache breaks if project is moved
+   module.enableCompileCache({ directory: '/path/to/cache/storage/dir' });
+
+   // Portable cache: cache works after the project is moved
+   module.enableCompileCache({ directory: '/path/to/cache/storage/dir', portable: true });
+   ```
+
+2. Setting the environment variable: [`NODE_COMPILE_CACHE_PORTABLE=1`][]
+
+### WebAssembly modules in the compile cache
+
+For WebAssembly modules loaded through the ES module integration, the compile cache stores
+the machine code that V8 has generated for the module when it is compiled. V8 only
+serializes code produced by its optimizing compiler. By default WebAssembly functions are
+compiled lazily with a baseline compiler and only optimized once they run hot, so at the time
+a module is compiled there is typically no optimized code and no cache entry is written.
+
+To cache WebAssembly modules, compile all functions with the optimizing compiler when the
+module is created:
+
+```console
+$ NODE_COMPILE_CACHE=/path/to/cache node --no-liftoff --no-wasm-lazy-compilation app.js
+```
+
+This makes the first, uncached load of a module slower in exchange for later loads skipping
+compilation entirely. Since V8 flags are part of the cache key, the same flags must be
+used for all processes sharing the cache.
+
+### Read-only compile cache
+
+A cache that was generated ahead of time, for example at build time to be
+shipped inside an application package, can be enabled with `readOnly: true`
+(or [`NODE_COMPILE_CACHE_READONLY=1`][]). Node.js then loads whatever entries
+the directory holds and never writes to it: modules without a usable entry are
+compiled as usual but not persisted, [`module.flushCompileCache()`][] is a
+no-op, and the directory is not created if it is missing.
+
+### Limitations of the compile cache
+
+V8 cannot collect block-level [V8 JavaScript code coverage][] for functions that
+are deserialized from the code cache. The compile cache is therefore disabled
+when coverage collection starts with the process, through
+[`NODE_V8_COVERAGE=dir`][] or [`--experimental-test-coverage`][]. Coverage that
+is started later, for example through the inspector, may be less precise in
+functions that were already deserialized from the code cache.
+
+Compilation cache generated by one version of Node.js can not be reused by a different
+version of Node.js. Cache generated by different versions of Node.js will be stored
+separately if the same base directory is used to persist the cache, so they can co-exist.
+
+### `module.constants.compileCacheStatus`
+
+<!-- YAML
+added: v22.8.0
+changes:
+  - version:
+     - v25.4.0
+     - v24.15.0
+    pr-url: https://github.com/nodejs/node/pull/60971
+    description: This feature is no longer experimental.
+-->
+
+The following constants are returned as the `status` field in the object returned by
+[`module.enableCompileCache()`][] to indicate the result of the attempt to enable the
+[module compile cache][].
+
+<table>
+  <tr>
+    <th>Constant</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td><code>ENABLED</code></td>
+    <td>
+      Node.js has enabled the compile cache successfully. The directory used to store the
+      compile cache will be returned in the <code>directory</code> field in the
+      returned object.
+    </td>
+  </tr>
+  <tr>
+    <td><code>ALREADY_ENABLED</code></td>
+    <td>
+      The compile cache has already been enabled before, either by a previous call to
+      <code>module.enableCompileCache()</code>, or by the <code>NODE_COMPILE_CACHE=dir</code>
+      environment variable. The directory used to store the
+      compile cache will be returned in the <code>directory</code> field in the
+      returned object.
+    </td>
+  </tr>
+  <tr>
+    <td><code>FAILED</code></td>
+    <td>
+      Node.js fails to enable the compile cache. This can be caused by the lack of
+      permission to use the specified directory, or various kinds of file system errors.
+      The detail of the failure will be returned in the <code>message</code> field in the
+      returned object.
+    </td>
+  </tr>
+  <tr>
+    <td><code>DISABLED</code></td>
+    <td>
+      Node.js cannot enable the compile cache because the environment variable
+      <code>NODE_DISABLE_COMPILE_CACHE=1</code> has been set, or because V8
+      coverage is being collected.
+    </td>
+  </tr>
+</table>
+
+### `module.enableCompileCache([options])`
+
+<!-- YAML
+added: v22.8.0
+changes:
+  - version: v26.8.0
+    pr-url: https://github.com/nodejs/node/pull/65302
+    description: Add the `readOnly` option.
+  - version:
+     - v25.4.0
+     - v24.15.0
+    pr-url: https://github.com/nodejs/node/pull/60971
+    description: This feature is no longer experimental.
+  - version:
+      - v25.0.0
+      - v24.12.0
+    pr-url: https://github.com/nodejs/node/pull/58797
+    description: Add `portable` option to enable portable compile cache.
+  - version:
+      - v25.0.0
+      - v24.12.0
+    pr-url: https://github.com/nodejs/node/pull/59931
+    description: Rename the unreleased `path` option to `directory` to maintain consistency.
+-->
+
+* `options` {string|Object} Optional. If a string is passed, it is considered to be `options.directory`.
+  * `directory` {string} Optional. Directory to store the compile cache. If not specified,
+    the directory specified by the [`NODE_COMPILE_CACHE=dir`][] environment variable
+    will be used if it's set, or `path.join(os.tmpdir(), 'node-compile-cache')`
+    otherwise.
+  * `portable` {boolean} Optional. If `true`, enables portable compile cache so that
+    the cache can be reused even if the project directory is moved. This is a best-effort
+    feature. If not specified, it will depend on whether the environment variable
+    [`NODE_COMPILE_CACHE_PORTABLE=1`][] is set.
+  * `readOnly` {boolean} Optional. If `true`, existing cache entries in `directory` are
+    used but nothing is ever written to it, and the directory is not created when it does
+    not exist (enabling then fails). Meant for caches generated ahead of time and shipped
+    with an application. If not specified, it will depend on whether the environment
+    variable [`NODE_COMPILE_CACHE_READONLY=1`][] is set.
+* Returns: {Object}
+  * `status` {integer} One of the [`module.constants.compileCacheStatus`][]
+  * `message` {string|undefined} If Node.js cannot enable the compile cache, this contains
+    the error message. Only set if `status` is `module.constants.compileCacheStatus.FAILED`.
+  * `directory` {string|undefined} If the compile cache is enabled, this contains the directory
+    where the compile cache is stored. Only set if  `status` is
+    `module.constants.compileCacheStatus.ENABLED` or
+    `module.constants.compileCacheStatus.ALREADY_ENABLED`.
+
+Enable [module compile cache][] in the current Node.js instance.
+
+For general use cases, it's recommended to call `module.enableCompileCache()` without
+specifying the `options.directory`, so that the directory can be overridden by the
+`NODE_COMPILE_CACHE` environment variable when necessary.
+
+Since compile cache is supposed to be an optimization that is not mission critical, this
+method is designed to not throw any exception when the compile cache cannot be enabled.
+Instead, it will return an object containing an error message in the `message` field to
+aid debugging. If compile cache is enabled successfully, the `directory` field in the
+returned object contains the path to the directory where the compile cache is stored. The
+`status` field in the returned object would be one of the `module.constants.compileCacheStatus`
+values to indicate the result of the attempt to enable the [module compile cache][].
+
+This method only affects the current Node.js instance. To enable it in child worker threads,
+either call this method in child worker threads too, or set the
+`process.env.NODE_COMPILE_CACHE` value to compile cache directory so the behavior can
+be inherited into the child workers. The directory can be obtained either from the
+`directory` field returned by this method, or with [`module.getCompileCacheDir()`][].
+
+### `module.flushCompileCache()`
+
+<!-- YAML
+added:
+ - v23.0.0
+ - v22.10.0
+changes:
+  - version:
+     - v25.4.0
+     - v24.15.0
+    pr-url: https://github.com/nodejs/node/pull/60971
+    description: This feature is no longer experimental.
+-->
+
+Flush the [module compile cache][] accumulated from modules already loaded
+in the current Node.js instance to disk. This returns after all the flushing
+file system operations come to an end, no matter they succeed or not. If there
+are any errors, this will fail silently, since compile cache misses should not
+interfere with the actual operation of the application.
+
+### `module.getCompileCacheDir()`
+
+<!-- YAML
+added: v22.8.0
+changes:
+  - version:
+     - v25.4.0
+     - v24.15.0
+    pr-url: https://github.com/nodejs/node/pull/60971
+    description: This feature is no longer experimental.
+-->
+
+* Returns: {string|undefined} Path to the [module compile cache][] directory if it is enabled,
+  or `undefined` otherwise.
+
+<i id="module_customization_hooks"></i>
+
+## Customization Hooks
+
+<!-- YAML
+added: v8.8.0
+changes:
+  - version:
+    - v25.4.0
+    - v24.13.1
+    pr-url: https://github.com/nodejs/node/pull/60960
+    description: Synchronous and in-thread hooks are now release candidate.
+  - version:
+    - v23.5.0
+    - v22.15.0
+    pr-url: https://github.com/nodejs/node/pull/55698
+    description: Add support for synchronous and in-thread hooks.
+  - version:
+    - v20.6.0
+    - v18.19.0
+    pr-url: https://github.com/nodejs/node/pull/48842
+    description: Added `initialize` hook to replace `globalPreload`.
+  - version:
+    - v18.6.0
+    - v16.17.0
+    pr-url: https://github.com/nodejs/node/pull/42623
+    description: Add support for chaining loaders.
+  - version: v16.12.0
+    pr-url: https://github.com/nodejs/node/pull/37468
+    description: Removed `getFormat`, `getSource`, `transformSource`, and
+                 `globalPreload`; added `load` hook and `getGlobalPreload` hook.
+-->
+
+<!-- type=misc -->
+
+Node.js supports module customization hooks registered with
+[`module.registerHooks()`][].
+
+> Stability: 1.2 - Release candidate
+
+<i id="enabling_module_customization_hooks"></i>
+
+### Registration of customization hooks
+
+To register customization hooks, use [`module.registerHooks()`][], which
+takes [hook functions][] directly in-line.
+
+```mjs
+// register-hooks.js
+import { registerHooks } from 'node:module';
+registerHooks({
+  resolve(specifier, context, nextResolve) { /* implementation */ },
+  load(url, context, nextLoad) { /* implementation */ },
+});
+```
+
+```cjs
+// register-hooks.js
+const { registerHooks } = require('node:module');
+registerHooks({
+  resolve(specifier, context, nextResolve) { /* implementation */ },
+  load(url, context, nextLoad) { /* implementation */ },
+});
+```
+
+#### Registering hooks before application code runs with flags
+
+The hooks can be registered before the application code is run by using the
+[`--import`][] or [`--require`][] flag:
+
+```bash
+node --import ./register-hooks.js ./my-app.js
+node --require ./register-hooks.js ./my-app.js
+```
+
+The specifier passed to `--import` or `--require` can also come from a package:
+
+```bash
+node --import some-package/register ./my-app.js
+node --require some-package/register ./my-app.js
+```
+
+Where `some-package` has an [`"exports"`][] field defining the `/register`
+export to map to a file that calls `registerHooks()`, like the
+`register-hooks.js` examples above.
+
+Using `--import` or `--require` ensures that the hooks are registered before any
+application code is loaded, including the entry point of the application and for
+any worker threads by default as well.
+
+#### Registering hooks before application code runs programmatically
+
+Alternatively, `registerHooks()` can be called from the entry point.
+
+If the entry point needs to load other modules and the loading process needs to be
+customized, load them using either `require()` or dynamic `import()` after the hooks
+are registered. Do not use static `import` statements to load modules that need to be
+customized in the same module that registers the hooks, because static `import` statements
+are evaluated before any code in the importer module is run, including the call to
+`registerHooks()`, regardless of where the static `import` statements appear in the importer
+module.
+
+```mjs
+import { registerHooks } from 'node:module';
+
+registerHooks({ /* implementation of hooks */ });
+
+// If loaded using static import, the hooks would not be applied when loading
+// my-app.mjs, because statically imported modules are all executed before its
+// importer regardless of where the static import appears.
+// import './my-app.mjs';
+
+// my-app.mjs must be loaded dynamically to ensure the hooks are applied.
+await import('./my-app.mjs');
+```
+
+```cjs
+const { registerHooks } = require('node:module');
+
+registerHooks({ /* implementation of hooks */ });
+
+import('./my-app.mjs');
+// Or, if my-app.mjs does not have top-level await or it's a CommonJS module,
+// require() can also be used:
+// require('./my-app.mjs');
+```
+
+#### Registering hooks before application code runs with a `data:` URL
+
+Alternatively, inline JavaScript code can be embedded in `data:` URLs to register
+the hooks before the application code runs. For example,
+
+```bash
+node --import 'data:text/javascript,import {registerHooks} from "node:module"; registerHooks(/* hooks code */);' ./my-app.js
+```
+
+### Convention of hooks and chaining
+
+Hooks are part of a chain, even if that chain consists of only one
+custom (user-provided) hook and the default hook, which is always present.
+
+Hook functions nest: each one must always return a plain object, and chaining happens
+as a result of each function calling `next<hookName>()`, which is a reference to
+the subsequent loader's hook (in LIFO order).
+
+It's possible to call `registerHooks()` more than once:
+
+```mjs
+// entrypoint.mjs
+import { registerHooks } from 'node:module';
+
+const hook1 = { /* implementation of hooks */ };
+const hook2 = { /* implementation of hooks */ };
+// hook2 runs before hook1.
+registerHooks(hook1);
+registerHooks(hook2);
+```
+
+```cjs
+// entrypoint.cjs
+const { registerHooks } = require('node:module');
+
+const hook1 = { /* implementation of hooks */ };
+const hook2 = { /* implementation of hooks */ };
+// hook2 runs before hook1.
+registerHooks(hook1);
+registerHooks(hook2);
+```
+
+In this example, the registered hooks will form chains. These chains run
+last-in, first-out (LIFO). If both `hook1` and `hook2` define a `resolve`
+hook, they will be called like so (note the right-to-left,
+starting with `hook2.resolve`, then `hook1.resolve`, then the Node.js default):
+
+Node.js default `resolve` ← `hook1.resolve` ← `hook2.resolve`
+
+The same applies to all the other hooks.
+
+A hook that returns a value lacking a required property triggers an exception. A
+hook that returns without calling `next<hookName>()` _and_ without returning
+`shortCircuit: true` also triggers an exception. These errors are to help
+prevent unintentional breaks in the chain. Return `shortCircuit: true` from a
+hook to signal that the chain is intentionally ending at your hook.
+
+If a hook should be applied when loading other hook modules, the other hook
+modules should be loaded after the hook is registered.
+
+### Deregistration of customization hooks
+
+The object returned by `registerHooks()` has a `deregister()` method that can be
+used to remove the hooks from the chain. Once `deregister()` is called, the hooks
+will no longer be invoked during module resolution or loading.
+
+This is available for hooks registered via `registerHooks()`.
+
+```mjs
+import { registerHooks } from 'node:module';
+
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    console.log('resolve hook called for', specifier);
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    return nextLoad(url, context);
+  },
+});
+
+// At this point, the hooks are active and will be called for
+// any subsequent import() or require() calls.
+await import('./my-module.mjs');
+
+// Later, remove the hooks from the chain.
+hooks.deregister();
+
+// Subsequent loads will no longer trigger the hooks.
+await import('./another-module.mjs');
+```
+
+```cjs
+const { registerHooks } = require('node:module');
+
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    console.log('resolve hook called for', specifier);
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    return nextLoad(url, context);
+  },
+});
+
+// At this point, the hooks are active and will be called for
+// any subsequent require() calls.
+require('./my-module.cjs');
+
+// Later, remove the hooks from the chain.
+hooks.deregister();
+
+// Subsequent loads will no longer trigger the hooks.
+require('./another-module.cjs');
+```
+
+### Hook functions accepted by `module.registerHooks()`
+
+<!-- YAML
+added:
+  - v23.5.0
+  - v22.15.0
+-->
+
+The `module.registerHooks()` method accepts the following hook functions.
+
+```mjs
+function resolve(specifier, context, nextResolve) {
+  // Take an `import` or `require` specifier and resolve it to a URL.
+}
+
+function load(url, context, nextLoad) {
+  // Take a resolved URL and return the source code to be evaluated.
+}
+```
+
+Hooks are run in the same [realm][] as the modules being loaded, so the code in the
+hook function can pass values to the modules being referenced directly via global
+variables or other shared states.
+
+Hooks are not inherited into child worker threads by default. If the hooks are
+registered using a file preloaded by [`--import`][] or [`--require`][], child worker threads
+can inherit the preloaded scripts via `process.execArgv` inheritance. See
+[the documentation of `Worker`][] for details.
+
+### `resolve(specifier, context, nextResolve)`
+
+<!-- YAML
+changes:
+  - version:
+    - v23.5.0
+    - v22.15.0
+    pr-url: https://github.com/nodejs/node/pull/55698
+    description: Add support for synchronous and in-thread hooks.
+-->
+
+* `specifier` {string}
+* `context` {Object}
+  * `conditions` {string\[]} Export conditions of the relevant `package.json`
+  * `importAttributes` {Object} An object whose key-value pairs represent the
+    attributes for the module to import
+  * `parentURL` {string|undefined} The module importing this one, or undefined
+    if this is the Node.js entry point
+* `nextResolve` {Function} The subsequent `resolve` hook in the chain, or the
+  Node.js default `resolve` hook after the last user-supplied `resolve` hook
+  * `specifier` {string}
+  * `context` {Object|undefined} When omitted, the defaults are provided. When provided, defaults
+    are merged in with preference to the provided properties.
+* Returns: {Object}
+  * `format` {string|null|undefined} A hint to the `load` hook (it might be ignored). It can be a
+    module format (such as `'commonjs'` or `'module'`) or an arbitrary value like `'css'` or
+    `'yaml'`.
+  * `importAttributes` {Object|undefined} The import attributes to use when
+    caching the module (optional; if excluded the input will be used)
+  * `shortCircuit` {undefined|boolean} A signal that this hook intends to
+    terminate the chain of `resolve` hooks. **Default:** `false`
+  * `url` {string} The absolute URL to which this input resolves
+
+The `resolve` hook chain is responsible for telling Node.js where to find and
+how to cache a given `import` statement or expression, or `require` call. It can
+optionally return a format (such as `'module'`) as a hint to the `load` hook. If
+a format is specified, the `load` hook is ultimately responsible for providing
+the final `format` value (and it is free to ignore the hint provided by
+`resolve`); if `resolve` provides a `format`, a custom `load` hook is required
+even if only to pass the value to the Node.js default `load` hook.
+
+Import type attributes are part of the cache key for saving loaded modules into
+the internal module cache. The `resolve` hook is responsible for returning an
+`importAttributes` object if the module should be cached with different
+attributes than were present in the source code.
+
+The `conditions` property in `context` is an array of conditions that will be used
+to match [package exports conditions][Conditional exports] for this resolution
+request. They can be used for looking up conditional mappings elsewhere or to
+modify the list when calling the default resolution logic.
+
+The current [package exports conditions][Conditional exports] are always in
+the `context.conditions` array passed into the hook. To guarantee _default
+Node.js module specifier resolution behavior_ when calling `defaultResolve`, the
+`context.conditions` array passed to it _must_ include _all_ elements of the
+`context.conditions` array originally passed into the `resolve` hook.
+
+```mjs
+import { registerHooks } from 'node:module';
+
+function resolve(specifier, context, nextResolve) {
+  // When calling `defaultResolve`, the arguments can be modified. For example,
+  // to change the specifier or to add applicable export conditions.
+  if (specifier.includes('foo')) {
+    specifier = specifier.replace('foo', 'bar');
+    return nextResolve(specifier, {
+      ...context,
+      conditions: [...context.conditions, 'another-condition'],
+    });
+  }
+
+  // The hook can also skip default resolution and provide a custom URL.
+  if (specifier === 'special-module') {
+    return {
+      url: 'file:///path/to/special-module.mjs',
+      format: 'module',
+      shortCircuit: true,  // This is mandatory if nextResolve() is not called.
+    };
+  }
+
+  // If no customization is needed, defer to the next hook in the chain which would be the
+  // Node.js default resolve if this is the last user-specified loader.
+  return nextResolve(specifier);
+}
+
+registerHooks({ resolve });
+```
+
+### `load(url, context, nextLoad)`
+
+<!-- YAML
+changes:
+  - version:
+    - v23.5.0
+    - v22.15.0
+    pr-url: https://github.com/nodejs/node/pull/55698
+    description: Add support for synchronous and in-thread version.
+-->
+
+* `url` {string} The URL returned by the `resolve` chain
+* `context` {Object}
+  * `conditions` {string\[]} Export conditions of the relevant `package.json`
+  * `format` {string|null|undefined} The format optionally supplied by the
+    `resolve` hook chain. This can be any string value as an input; input values do not need to
+    conform to the list of acceptable return values described below.
+  * `importAttributes` {Object}
+* `nextLoad` {Function} The subsequent `load` hook in the chain, or the
+  Node.js default `load` hook after the last user-supplied `load` hook
+  * `url` {string}
+  * `context` {Object|undefined} When omitted, defaults are provided. When provided, defaults are
+    merged in with preference to the provided properties. In the default `nextLoad`, if
+    the module pointed to by `url` does not have explicit module type information,
+    `context.format` is mandatory.
+    <!-- TODO(joyeecheung): make it at least optionally non-mandatory by allowing
+         JS-style/TS-style module detection when the format is simply unknown -->
+* Returns: {Object}
+  * `format` {string} One of the acceptable module formats listed [below][accepted final formats].
+  * `shortCircuit` {undefined|boolean} A signal that this hook intends to
+    terminate the chain of `load` hooks. **Default:** `false`
+  * `source` {string|ArrayBuffer|TypedArray} The source for Node.js to evaluate
+
+The `load` hook provides a way to define a custom method for retrieving the
+source code of a resolved URL. This would allow a loader to potentially avoid
+reading files from disk. It could also be used to map an unrecognized format to
+a supported one, for example `yaml` to `module`.
+
+```mjs
+import { registerHooks } from 'node:module';
+import { Buffer } from 'node:buffer';
+
+function load(url, context, nextLoad) {
+  // The hook can skip default loading and provide a custom source code.
+  if (url === 'special-module') {
+    return {
+      source: 'export const special = 42;',
+      format: 'module',
+      shortCircuit: true,  // This is mandatory if nextLoad() is not called.
+    };
+  }
+
+  // It's possible to modify the source code loaded by the next - possibly default - step,
+  // for example, replacing 'foo' with 'bar' in the source code of the module.
+  const result = nextLoad(url, context);
+  const source = typeof result.source === 'string' ?
+    result.source : Buffer.from(result.source).toString('utf8');
+  return {
+    source: source.replace(/foo/g, 'bar'),
+    ...result,
+  };
+}
+
+registerHooks({ load });
+```
+
+In a more advanced scenario, this can also be used to transform an unsupported
+source to a supported one (see [Examples](#examples) below).
+
+#### Accepted final formats returned by `load`
+
+The final value of `format` must be one of the following:
+
+| `format`                | Description                                           | Acceptable types for `source` returned by `load`   |
+| ----------------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| `'addon'`               | Load a Node.js addon                                  | {null}                                             |
+| `'builtin'`             | Load a Node.js builtin module                         | {null}                                             |
+| `'commonjs-typescript'` | Load a Node.js CommonJS module with TypeScript syntax | {string\|ArrayBuffer\|TypedArray\|null\|undefined} |
+| `'commonjs'`            | Load a Node.js CommonJS module                        | {string\|ArrayBuffer\|TypedArray\|null\|undefined} |
+| `'json'`                | Load a JSON file                                      | {string\|ArrayBuffer\|TypedArray}                  |
+| `'module-typescript'`   | Load an ES module with TypeScript syntax              | {string\|ArrayBuffer\|TypedArray}                  |
+| `'module'`              | Load an ES module                                     | {string\|ArrayBuffer\|TypedArray}                  |
+| `'wasm'`                | Load a WebAssembly module                             | {ArrayBuffer\|TypedArray}                          |
+
+The value of `source` is ignored for format `'builtin'` because currently it is
+not possible to replace the value of a Node.js builtin (core) module.
+
+> These types all correspond to classes defined in ECMAScript.
+
+* The specific {ArrayBuffer} object is a {SharedArrayBuffer}.
+* The specific {TypedArray} object is a {Uint8Array}.
+
+If the source value of a text-based format (i.e., `'json'`, `'module'`)
+is not a string, it is converted to a string using [`TextDecoder`][].
+
+### Examples
+
+The various module customization hooks can be used together to accomplish
+wide-ranging customizations of the Node.js code loading and evaluation
+behaviors.
+
+#### Transpilation
+
+Sources that are in formats Node.js doesn't understand can be converted into
+JavaScript using the [`load` hook][load hook].
+
+This is less performant than transpiling source files before running Node.js;
+transpiler hooks should only be used for development and testing purposes.
+
+```mjs
+// coffeescript-sync-hooks.mjs
+import { readFileSync } from 'node:fs';
+import { registerHooks, findPackageJSON } from 'node:module';
+import coffeescript from 'coffeescript';
+
+const extensionsRegex = /\.(coffee|litcoffee|coffee\.md)$/;
+
+function load(url, context, nextLoad) {
+  if (extensionsRegex.test(url)) {
+    const { source: rawSource } = nextLoad(url, { ...context, format: 'coffee' });
+    const transformedSource = coffeescript.compile(rawSource.toString(), url);
+
+    return {
+      format: getPackageType(url),
+      shortCircuit: true,
+      source: transformedSource,
+    };
+  }
+
+  return nextLoad(url, context);
+}
+
+function getPackageType(url) {
+  const pJson = findPackageJSON(url);
+  if (!pJson) {
+    return undefined;
+  }
+  try {
+    const file = readFileSync(pJson, 'utf-8');
+    return JSON.parse(file)?.type;
+  } catch {
+    return undefined;
+  }
+}
+
+registerHooks({ load });
+```
+
+#### Running hooks
+
+```coffee
+# main.coffee
+import { scream } from './scream.coffee'
+console.log scream 'hello, world'
+
+import { version } from 'node:process'
+console.log "Brought to you by Node.js version #{version}"
+```
+
+```coffee
+# scream.coffee
+export scream = (str) -> str.toUpperCase()
+```
+
+For the sake of running the example, add a `package.json` file containing the
+module type of the CoffeeScript files.
+
+```json
+{
+  "type": "module"
+}
+```
+
+This is only for running the example. In real world loaders, `getPackageType()` must be
+able to return an `format` known to Node.js even in the absence of an explicit type in a
+`package.json`, or otherwise the `nextLoad` call would throw `ERR_UNKNOWN_FILE_EXTENSION`
+(if undefined) or `ERR_UNKNOWN_MODULE_FORMAT` (if it's not a known format listed in
+the [load hook][] documentation).
+
+With the preceding hooks module, running
+`node --import ./coffeescript-sync-hooks.mjs ./main.coffee`
+causes `main.coffee` to be turned into JavaScript after its source code is
+loaded from disk but before Node.js executes it; and so on for any `.coffee`,
+`.litcoffee` or `.coffee.md` files referenced via `import` statements of any
+loaded file.
+
+#### Import maps
+
+The previous two examples defined `load` hooks. This is an example of a
+`resolve` hook. This hooks module reads an `import-map.json` file that defines
+which specifiers to override to other URLs (this is a very simplistic
+implementation of a small subset of the "import maps" specification).
+
+```mjs
+// import-map-sync-hooks.js
+import fs from 'node:fs/promises';
+import module from 'node:module';
+
+const { imports } = JSON.parse(fs.readFileSync('import-map.json', 'utf-8'));
+
+function resolve(specifier, context, nextResolve) {
+  if (Object.hasOwn(imports, specifier)) {
+    return nextResolve(imports[specifier], context);
+  }
+
+  return nextResolve(specifier, context);
+}
+
+module.registerHooks({ resolve });
+```
+
+##### Using the hooks
+
+With these files:
+
+```mjs
+// main.js
+import 'a-module';
+```
+
+```json
+// import-map.json
+{
+  "imports": {
+    "a-module": "./some-module.js"
+  }
+}
+```
+
+```mjs
+// some-module.js
+console.log('some module!');
+```
+
+Running `node --import ./import-map-sync-hooks.js main.js`
+should print `some module!`.
+
+## Source Map Support
+
+<!-- YAML
+added:
+ - v13.7.0
+ - v12.17.0
+-->
+
+> Stability: 1 - Experimental
+
+Node.js supports TC39 ECMA-426 [Source Map][] format (it was called Source map
+revision 3 format).
+
+The APIs in this section are helpers for interacting with the source map
+cache. This cache is populated when source map parsing is enabled and
+[source map include directives][] are found in a modules' footer.
+
+To enable source map parsing, Node.js must be run with the flag
+[`--enable-source-maps`][], or with code coverage enabled by setting
+[`NODE_V8_COVERAGE=dir`][], or be enabled programmatically via
+[`module.setSourceMapsSupport()`][].
+
+```mjs
+// module.mjs
+// In an ECMAScript module
+import { findSourceMap, SourceMap } from 'node:module';
+```
+
+```cjs
+// module.cjs
+// In a CommonJS module
+const { findSourceMap, SourceMap } = require('node:module');
+```
+
+### `module.getSourceMapsSupport()`
+
+<!-- YAML
+added:
+  - v23.7.0
+  - v22.14.0
+-->
+
+* Returns: {Object}
+  * `enabled` {boolean} If the source maps support is enabled
+  * `nodeModules` {boolean} If the support is enabled for files in `node_modules`.
+  * `generatedCode` {boolean} If the support is enabled for generated code from `eval` or `new Function`.
+
+This method returns whether the [Source Map v3][Source Map] support for stack
+traces is enabled.
+
+<!-- Anchors to make sure old links find a target -->
+
+<a id="module_module_findsourcemap_path_error"></a>
+
+### `module.findSourceMap(path)`
+
+<!-- YAML
+added:
+ - v13.7.0
+ - v12.17.0
+-->
+
+* `path` {string}
+* Returns: {module.SourceMap|undefined} Returns `module.SourceMap` if a source
+  map is found, `undefined` otherwise.
+
+`path` is the resolved path for the file for which a corresponding source map
+should be fetched.
+
+### `module.setSourceMapsSupport(enabled[, options])`
+
+<!-- YAML
+added:
+  - v23.7.0
+  - v22.14.0
+-->
+
+* `enabled` {boolean} Enable the source map support.
+* `options` {Object} Optional
+  * `nodeModules` {boolean} If enabling the support for files in
+    `node_modules`. **Default:** `false`.
+  * `generatedCode` {boolean} If enabling the support for generated code from
+    `eval` or `new Function`. **Default:** `false`.
+
+This function enables or disables the [Source Map v3][Source Map] support for
+stack traces.
+
+It provides same features as launching Node.js process with commandline options
+`--enable-source-maps`, with additional options to alter the support for files
+in `node_modules` or generated codes.
+
+Only source maps in JavaScript files that are loaded after source maps has been
+enabled will be parsed and loaded. Preferably, use the commandline options
+`--enable-source-maps` to avoid losing track of source maps of modules loaded
+before this API call.
+
+### Class: `module.SourceMap`
+
+<!-- YAML
+added:
+ - v13.7.0
+ - v12.17.0
+-->
+
+#### `new SourceMap(payload[, { lineLengths }])`
+
+<!-- YAML
+changes:
+  - version: v20.5.0
+    pr-url: https://github.com/nodejs/node/pull/48461
+    description: Add support for `lineLengths`.
+-->
+
+* `payload` {Object}
+* `lineLengths` {number\[]}
+
+Creates a new `sourceMap` instance.
+
+`payload` is an object with keys matching the [Source map format][]:
+
+* `file` {string}
+* `version` {number}
+* `sources` {string\[]}
+* `sourcesContent` {string\[]}
+* `names` {string\[]}
+* `mappings` {string}
+* `sourceRoot` {string}
+
+`lineLengths` is an optional array of the length of each line in the
+generated code.
+
+#### `sourceMap.payload`
+
+<!-- YAML
+changes:
+  - version: v27.0.0-alpha.0.0.0
+    pr-url: https://github.com/nodejs/node/pull/62830
+    description: The object is frozen.
+-->
+
+* Returns: {Object}
+
+Getter for the payload used to construct the [`SourceMap`][] instance.
+
+The returned object is frozen with [`Object.freeze()`][], and the same
+reference is returned on every access. Do not mutate the returned object.
+
+#### `sourceMap.findEntry(lineOffset, columnOffset)`
+
+* `lineOffset` {number} The zero-indexed line number offset in
+  the generated source
+* `columnOffset` {number} The zero-indexed column number offset
+  in the generated source
+* Returns: {Object}
+
+Given a line offset and column offset in the generated source
+file, returns an object representing the SourceMap range in the
+original file if found, or an empty object if not.
+
+The object returned contains the following keys:
+
+* `generatedLine` {number} The line offset of the start of the
+  range in the generated source
+* `generatedColumn` {number} The column offset of start of the
+  range in the generated source
+* `originalSource` {string} The file name of the original source,
+  as reported in the SourceMap
+* `originalLine` {number} The line offset of the start of the
+  range in the original source
+* `originalColumn` {number} The column offset of start of the
+  range in the original source
+* `name` {string}
+
+The returned value represents the raw range as it appears in the
+SourceMap, based on zero-indexed offsets, _not_ 1-indexed line and
+column numbers as they appear in Error messages and CallSite
+objects.
+
+To get the corresponding 1-indexed line and column numbers from a
+lineNumber and columnNumber as they are reported by Error stacks
+and CallSite objects, use `sourceMap.findOrigin(lineNumber,
+columnNumber)`
+
+#### `sourceMap.findOrigin(lineNumber, columnNumber)`
+
+<!-- YAML
+added:
+  - v20.4.0
+  - v18.18.0
+-->
+
+* `lineNumber` {number} The 1-indexed line number of the call
+  site in the generated source
+* `columnNumber` {number} The 1-indexed column number
+  of the call site in the generated source
+* Returns: {Object}
+
+Given a 1-indexed `lineNumber` and `columnNumber` from a call site in
+the generated source, find the corresponding call site location
+in the original source.
+
+If the `lineNumber` and `columnNumber` provided are not found in any
+source map, then an empty object is returned. Otherwise, the
+returned object contains the following keys:
+
+* `name` {string|undefined} The name of the range in the
+  source map, if one was provided
+* `fileName` {string} The file name of the original source, as
+  reported in the SourceMap
+* `lineNumber` {number} The 1-indexed lineNumber of the
+  corresponding call site in the original source
+* `columnNumber` {number} The 1-indexed columnNumber of the
+  corresponding call site in the original source
+
+[CommonJS]: modules.md
+[Conditional exports]: packages.md#conditional-exports
+[Customization hooks]: #customization-hooks
+[ES Modules]: esm.md
+[Source Map]: https://tc39.es/ecma426/
+[Source map format]: https://tc39.es/ecma426/#sec-source-map-format
+[V8 JavaScript code coverage]: https://v8project.blogspot.com/2017/12/javascript-code-coverage.html
+[V8 code cache]: https://v8.dev/blog/code-caching-for-devs
+[`"exports"`]: packages.md#exports
+[`--enable-source-maps`]: cli.md#--enable-source-maps
+[`--experimental-test-coverage`]: cli.md#--experimental-test-coverage
+[`--import`]: cli.md#--importmodule
+[`--require`]: cli.md#-r---require-module
+[`NODE_COMPILE_CACHE=dir`]: cli.md#node_compile_cachedir
+[`NODE_COMPILE_CACHE_PORTABLE=1`]: cli.md#node_compile_cache_portable1
+[`NODE_COMPILE_CACHE_READONLY=1`]: cli.md#node_compile_cache_readonly1
+[`NODE_DISABLE_COMPILE_CACHE=1`]: cli.md#node_disable_compile_cache1
+[`NODE_V8_COVERAGE=dir`]: cli.md#node_v8_coveragedir
+[`Object.freeze()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/freeze
+[`SourceMap`]: #class-modulesourcemap
+[`TextDecoder`]: globals.md#class-textdecoder
+[`module.constants.compileCacheStatus`]: #moduleconstantscompilecachestatus
+[`module.enableCompileCache()`]: #moduleenablecompilecacheoptions
+[`module.flushCompileCache()`]: #moduleflushcompilecache
+[`module.getCompileCacheDir()`]: #modulegetcompilecachedir
+[`module.isBuiltin()`]: #moduleisbuiltinmodulename
+[`module.registerHooks()`]: #moduleregisterhooksoptions
+[`module.setSourceMapsSupport()`]: #modulesetsourcemapssupportenabled-options
+[`os.tmpdir()`]: os.md#ostmpdir
+[accepted final formats]: #accepted-final-formats-returned-by-load
+[deregistration of customization hooks]: #deregistration-of-customization-hooks
+[hook functions]: #hook-functions-accepted-by-moduleregisterhooks
+[hooks]: #customization-hooks
+[load hook]: #loadurl-context-nextload
+[module compile cache]: #module-compile-cache
+[realm]: https://tc39.es/ecma262/#realm
+[resolve hook]: #resolvespecifier-context-nextresolve
+[source map include directives]: https://tc39.es/ecma426/#sec-linking-generated-code
+[the `module` object]: modules.md#the-module-object
+[the documentation of `Worker`]: worker_threads.md#new-workerfilename-options
+[type-stripping]: typescript.md#type-stripping
