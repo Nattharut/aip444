@@ -1,0 +1,5 @@
+openai==3.60.0
+pillow==13.0.0
+pydantic==2.14.4
+python-dotenv==1.2.4
+tavily-python==0.8.5
